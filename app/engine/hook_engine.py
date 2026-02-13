@@ -23,34 +23,44 @@ if IS_WINDOWS:
     MOUSEEVENTF_MIDDLEDOWN = 0x0020
     MOUSEEVENTF_MIDDLEUP = 0x0040
 
+    ULONG_PTR = ctypes.c_ulonglong if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_ulong
+
     class MOUSEINPUT(ctypes.Structure):
         _fields_ = [
-            ("dx", ctypes.wintypes.LONG),
-            ("dy", ctypes.wintypes.LONG),
-            ("mouseData", ctypes.wintypes.DWORD),
-            ("dwFlags", ctypes.wintypes.DWORD),
-            ("time", ctypes.wintypes.DWORD),
-            ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+            ("dx", ctypes.c_long),
+            ("dy", ctypes.c_long),
+            ("mouseData", ctypes.c_ulong),
+            ("dwFlags", ctypes.c_ulong),
+            ("time", ctypes.c_ulong),
+            ("dwExtraInfo", ULONG_PTR),
         ]
 
     class KEYBDINPUT(ctypes.Structure):
         _fields_ = [
-            ("wVk", ctypes.wintypes.WORD),
-            ("wScan", ctypes.wintypes.WORD),
-            ("dwFlags", ctypes.wintypes.DWORD),
-            ("time", ctypes.wintypes.DWORD),
-            ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+            ("wVk", ctypes.c_ushort),
+            ("wScan", ctypes.c_ushort),
+            ("dwFlags", ctypes.c_ulong),
+            ("time", ctypes.c_ulong),
+            ("dwExtraInfo", ULONG_PTR),
+        ]
+
+    class HARDWAREINPUT(ctypes.Structure):
+        _fields_ = [
+            ("uMsg", ctypes.c_ulong),
+            ("wParamL", ctypes.c_ushort),
+            ("wParamH", ctypes.c_ushort),
         ]
 
     class INPUT_UNION(ctypes.Union):
         _fields_ = [
             ("mi", MOUSEINPUT),
             ("ki", KEYBDINPUT),
+            ("hi", HARDWAREINPUT),
         ]
 
     class INPUT(ctypes.Structure):
         _fields_ = [
-            ("type", ctypes.wintypes.DWORD),
+            ("type", ctypes.c_ulong),
             ("union", INPUT_UNION),
         ]
 
@@ -165,12 +175,15 @@ def _normalize_key(key) -> str | None:
 
 
 class HookEngine:
+    WM_KEYDOWN = 0x0100
+    WM_SYSKEYDOWN = 0x0104
+
     def __init__(self):
         self._mappings: list[MappingItem] = []
         self._keyboard_listener: keyboard.Listener | None = None
         self._mouse_listener: mouse.Listener | None = None
         self._running = False
-        self._suppressed_keys: set[str] = set()
+        self._vk_to_mapping: dict[int, MappingItem] = {}
 
     @property
     def is_running(self) -> bool:
@@ -181,20 +194,23 @@ class HookEngine:
             self.stop()
 
         self._mappings = [m for m in mappings if m.enabled]
-        self._suppressed_keys = set()
 
-        keyboard_sources = {
-            m.source.value for m in self._mappings if m.source.event_type == "keyboard"
-        }
         mouse_sources = {
             m.source.value for m in self._mappings if m.source.event_type == "mouse"
         }
 
-        if keyboard_sources:
+        self._vk_to_mapping = {}
+        for m in self._mappings:
+            if m.source.event_type == "keyboard":
+                vk = VK_MAP.get(m.source.value)
+                if vk:
+                    self._vk_to_mapping[vk] = m
+
+        if self._vk_to_mapping:
             self._keyboard_listener = keyboard.Listener(
-                on_press=self._on_key_press,
-                on_release=self._on_key_release,
-                suppress=True,
+                on_press=lambda key: None,
+                on_release=lambda key: None,
+                win32_event_filter=self._win32_filter,
             )
             self._keyboard_listener.start()
 
@@ -215,51 +231,14 @@ class HookEngine:
             self._mouse_listener = None
         self._running = False
 
-    def _on_key_press(self, key, injected=False):
-        if injected:
-            return
-
-        normalized = _normalize_key(key)
-        if normalized is None:
-            return
-
-        mapping = self._find_keyboard_mapping(normalized)
-        if mapping:
-            self._suppressed_keys.add(normalized)
-            threading.Thread(
-                target=self._execute_target, args=(mapping,), daemon=True
-            ).start()
-            return
-
-        if IS_WINDOWS:
-            vk = VK_MAP.get(normalized)
-            if vk:
-                _send_key_event(vk)
-        else:
-            pynput_key = _value_to_pynput_key(normalized)
-            if pynput_key:
-                keyboard.Controller().press(pynput_key)
-
-    def _on_key_release(self, key, injected=False):
-        if injected:
-            return
-
-        normalized = _normalize_key(key)
-        if normalized is None:
-            return
-
-        if normalized in self._suppressed_keys:
-            self._suppressed_keys.discard(normalized)
-            return
-
-        if IS_WINDOWS:
-            vk = VK_MAP.get(normalized)
-            if vk:
-                _send_key_event(vk, key_up=True)
-        else:
-            pynput_key = _value_to_pynput_key(normalized)
-            if pynput_key:
-                keyboard.Controller().release(pynput_key)
+    def _win32_filter(self, msg, data):
+        if data.vkCode in self._vk_to_mapping:
+            if msg in (self.WM_KEYDOWN, self.WM_SYSKEYDOWN):
+                mapping = self._vk_to_mapping[data.vkCode]
+                threading.Thread(
+                    target=self._execute_target, args=(mapping,), daemon=True
+                ).start()
+            self._keyboard_listener.suppress_event()
 
     def _on_mouse_click(self, x, y, button, pressed, injected=False):
         if injected:
@@ -291,19 +270,41 @@ class HookEngine:
         return None
 
     def _execute_target(self, mapping: MappingItem):
-        delay = 0.1
-        for i, event in enumerate(mapping.target):
-            if i > 0:
-                time.sleep(delay)
-            if event.event_type == "keyboard":
-                vk = VK_MAP.get(event.value)
-                if vk and IS_WINDOWS:
+        MODIFIER_KEYS = {"shift", "ctrl", "alt", "meta"}
+
+        modifiers = []
+        actions = []
+        for event in mapping.target:
+            if event.event_type == "keyboard" and event.value in MODIFIER_KEYS:
+                modifiers.append(event)
+            else:
+                actions.append(event)
+
+        if IS_WINDOWS:
+            for mod in modifiers:
+                vk = VK_MAP.get(mod.value)
+                if vk:
                     _send_key_event(vk)
-                    time.sleep(0.03)
+                    time.sleep(0.02)
+
+            for i, event in enumerate(actions):
+                if i > 0:
+                    time.sleep(0.05)
+                if event.event_type == "keyboard":
+                    vk = VK_MAP.get(event.value)
+                    if vk:
+                        _send_key_event(vk)
+                        time.sleep(0.03)
+                        _send_key_event(vk, key_up=True)
+                elif event.event_type == "mouse":
+                    down_up = MOUSE_DOWN_UP.get(event.value)
+                    if down_up and down_up[0]:
+                        _send_mouse_event(down_up[0])
+                        time.sleep(0.03)
+                        _send_mouse_event(down_up[1])
+
+            for mod in reversed(modifiers):
+                vk = VK_MAP.get(mod.value)
+                if vk:
+                    time.sleep(0.02)
                     _send_key_event(vk, key_up=True)
-            elif event.event_type == "mouse":
-                down_up = MOUSE_DOWN_UP.get(event.value)
-                if down_up and down_up[0] and IS_WINDOWS:
-                    _send_mouse_event(down_up[0])
-                    time.sleep(0.03)
-                    _send_mouse_event(down_up[1])
