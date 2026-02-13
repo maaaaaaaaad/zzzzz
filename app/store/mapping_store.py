@@ -1,4 +1,5 @@
 import json
+import sys
 from pathlib import Path
 
 from app.models.mapping_item import MappingItem
@@ -6,7 +7,11 @@ from app.models.mapping_item import MappingItem
 
 class MappingStore:
     def __init__(self, os_type: str):
-        self._config_dir = Path(__file__).resolve().parent.parent.parent / "config"
+        if getattr(sys, "frozen", False):
+            base_dir = Path(sys.executable).parent
+        else:
+            base_dir = Path(__file__).resolve().parent.parent.parent
+        self._config_dir = base_dir / "config"
         self._config_dir.mkdir(exist_ok=True)
         self._file_path = self._config_dir / f"{os_type}_mappings.json"
         self._mappings: list[MappingItem] = []
