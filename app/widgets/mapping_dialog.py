@@ -1,6 +1,7 @@
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QEvent
 from PySide6.QtGui import QKeyEvent, QMouseEvent
 from PySide6.QtWidgets import (
+    QApplication,
     QDialog,
     QVBoxLayout,
     QHBoxLayout,
@@ -32,7 +33,7 @@ KEY_MAP = {
     Qt.Key.Key_F4: "f4", Qt.Key.Key_F5: "f5", Qt.Key.Key_F6: "f6",
     Qt.Key.Key_F7: "f7", Qt.Key.Key_F8: "f8", Qt.Key.Key_F9: "f9",
     Qt.Key.Key_F10: "f10", Qt.Key.Key_F11: "f11", Qt.Key.Key_F12: "f12",
-    Qt.Key.Key_Escape: "escape", Qt.Key.Key_Tab: "tab",
+    Qt.Key.Key_Escape: "escape", Qt.Key.Key_Tab: "tab", Qt.Key.Key_Backtab: "tab",
     Qt.Key.Key_Backspace: "backspace", Qt.Key.Key_Return: "enter",
     Qt.Key.Key_Enter: "enter", Qt.Key.Key_Space: "space",
     Qt.Key.Key_Delete: "delete", Qt.Key.Key_Insert: "insert",
@@ -87,10 +88,10 @@ class KeyCaptureButton(QPushButton):
         else:
             self.setText("Press keys in sequence... (Esc to finish)")
         self.setFocus()
-        self.grabKeyboard()
+        QApplication.instance().installEventFilter(self)
 
     def _stop_capture(self):
-        self.releaseKeyboard()
+        QApplication.instance().removeEventFilter(self)
         self._capturing = False
         if self._events:
             self.setText(" → ".join(e.display_name() for e in self._events))
@@ -108,14 +109,38 @@ class KeyCaptureButton(QPushButton):
             self.setText("Click to set key...")
 
     def clear_events(self):
+        if self._capturing:
+            QApplication.instance().removeEventFilter(self)
         self._events = []
         self._capturing = False
         self.setText("Click to set key...")
 
-    def focusNextPrevChild(self, next_child):
+    def eventFilter(self, obj, event):
         if self._capturing:
-            return False
-        return super().focusNextPrevChild(next_child)
+            if event.type() == QEvent.Type.ShortcutOverride:
+                event.accept()
+                return True
+            if event.type() == QEvent.Type.KeyPress:
+                key_event = QKeyEvent(event)
+                if key_event.isAutoRepeat():
+                    return True
+                key = key_event.key()
+                if key == Qt.Key.Key_Escape:
+                    self._stop_capture()
+                    return True
+                is_numpad = bool(key_event.modifiers() & Qt.KeyboardModifier.KeypadModifier)
+                if is_numpad and key in NUMPAD_MAP:
+                    value = NUMPAD_MAP[key]
+                elif key in KEY_MAP:
+                    value = KEY_MAP[key]
+                else:
+                    return True
+                self._events.append(InputEvent(event_type="keyboard", value=value))
+                self.setText(" → ".join(e.display_name() for e in self._events))
+                if self._single:
+                    self._stop_capture()
+                return True
+        return super().eventFilter(obj, event)
 
     def keyPressEvent(self, event: QKeyEvent):
         if not self._capturing:
@@ -257,6 +282,12 @@ class MappingDialog(QDialog):
             self._turbo_check.setChecked(p["turbo"])
             self._delay_spin.setValue(p["delay_ms"])
             self._preset_loop = p.get("loop", False)
+
+    def focusNextPrevChild(self, next_child):
+        for btn in (self._source_btn, self._target_btn, self._stop_key_btn):
+            if btn._capturing:
+                return False
+        return super().focusNextPrevChild(next_child)
 
     def _on_turbo_toggled(self, checked: bool):
         self._delay_spin.setEnabled(not checked)
