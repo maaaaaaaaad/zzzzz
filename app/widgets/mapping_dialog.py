@@ -1,4 +1,4 @@
-from PySide6.QtCore import Qt, QEvent
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeyEvent, QMouseEvent
 from PySide6.QtWidgets import (
     QDialog,
@@ -110,12 +110,10 @@ class KeyCaptureButton(QPushButton):
         self._capturing = False
         self.setText("Click to set key...")
 
-    def event(self, event):
-        if self._capturing and event.type() == QEvent.Type.KeyPress:
-            if event.key() == Qt.Key.Key_Tab:
-                self.keyPressEvent(event)
-                return True
-        return super().event(event)
+    def focusNextPrevChild(self, next_child):
+        if self._capturing:
+            return False
+        return super().focusNextPrevChild(next_child)
 
     def keyPressEvent(self, event: QKeyEvent):
         if not self._capturing:
