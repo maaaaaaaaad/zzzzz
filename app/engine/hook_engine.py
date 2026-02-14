@@ -198,6 +198,22 @@ class HookEngine:
     def is_running(self) -> bool:
         return self._running
 
+    VK_VARIANTS = {
+        0x10: [0xA0, 0xA1],
+        0x11: [0xA2, 0xA3],
+        0x12: [0xA4, 0xA5],
+    }
+
+    def _register_vk(self, vk: int, value):
+        self._vk_to_mapping[vk] = value
+        for variant in self.VK_VARIANTS.get(vk, []):
+            self._vk_to_mapping[variant] = value
+
+    def _register_stop_vk(self, vk: int, mapping_id: str):
+        self._stop_vk_to_mapping_id[vk] = mapping_id
+        for variant in self.VK_VARIANTS.get(vk, []):
+            self._stop_vk_to_mapping_id[variant] = mapping_id
+
     def start(self, mappings: list[MappingItem]):
         if self._running:
             self.stop()
@@ -216,13 +232,13 @@ class HookEngine:
             if m.source.event_type == "keyboard":
                 vk = VK_MAP.get(m.source.value)
                 if vk:
-                    self._vk_to_mapping[vk] = m
+                    self._register_vk(vk, m)
 
             if m.stop_key:
                 if m.stop_key.event_type == "keyboard":
                     stop_vk = VK_MAP.get(m.stop_key.value)
                     if stop_vk:
-                        self._stop_vk_to_mapping_id[stop_vk] = m.id
+                        self._register_stop_vk(stop_vk, m.id)
                 elif m.stop_key.event_type == "mouse":
                     self._stop_mouse_to_mapping_id[m.stop_key.value] = m.id
 
