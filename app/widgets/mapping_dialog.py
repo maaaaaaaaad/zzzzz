@@ -7,6 +7,8 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QGroupBox,
+    QSpinBox,
+    QCheckBox,
 )
 
 from app.models.input_event import InputEvent
@@ -70,16 +72,20 @@ MOUSE_BUTTON_MAP = {
 
 
 class KeyCaptureButton(QPushButton):
-    def __init__(self, label: str = "Click to set key..."):
+    def __init__(self, label: str = "Click to set key...", single: bool = False):
         super().__init__(label)
         self._capturing = False
         self._events: list[InputEvent] = []
+        self._single = single
         self.clicked.connect(self._start_capture)
 
     def _start_capture(self):
         self._capturing = True
         self._events = []
-        self.setText("Press keys in sequence... (Esc to finish)")
+        if self._single:
+            self.setText("Press a key or mouse button...")
+        else:
+            self.setText("Press keys in sequence... (Esc to finish)")
         self.setFocus()
 
     def _stop_capture(self):
@@ -98,6 +104,11 @@ class KeyCaptureButton(QPushButton):
             self.setText(" → ".join(e.display_name() for e in events))
         else:
             self.setText("Click to set key...")
+
+    def clear_events(self):
+        self._events = []
+        self._capturing = False
+        self.setText("Click to set key...")
 
     def keyPressEvent(self, event: QKeyEvent):
         if not self._capturing:
@@ -125,6 +136,9 @@ class KeyCaptureButton(QPushButton):
         self._events.append(InputEvent(event_type="keyboard", value=value))
         self.setText(" → ".join(e.display_name() for e in self._events))
 
+        if self._single:
+            self._stop_capture()
+
     def keyReleaseEvent(self, event: QKeyEvent):
         if not self._capturing:
             super().keyReleaseEvent(event)
@@ -139,6 +153,9 @@ class KeyCaptureButton(QPushButton):
             value = MOUSE_BUTTON_MAP[button]
             self._events.append(InputEvent(event_type="mouse", value=value))
             self.setText(" → ".join(e.display_name() for e in self._events))
+
+            if self._single:
+                self._stop_capture()
 
 
 class MappingDialog(QDialog):
@@ -162,6 +179,33 @@ class MappingDialog(QDialog):
         target_layout.addWidget(self._target_btn)
         layout.addWidget(target_group)
 
+        options_group = QGroupBox("Options")
+        options_layout = QVBoxLayout(options_group)
+
+        delay_layout = QHBoxLayout()
+        delay_layout.addWidget(QLabel("Delay between keys:"))
+        self._delay_spin = QSpinBox()
+        self._delay_spin.setRange(0, 99999)
+        self._delay_spin.setSuffix(" ms")
+        self._delay_spin.setValue(0)
+        delay_layout.addWidget(self._delay_spin)
+        options_layout.addLayout(delay_layout)
+
+        self._turbo_check = QCheckBox("Turbo")
+        self._turbo_check.toggled.connect(self._on_turbo_toggled)
+        options_layout.addWidget(self._turbo_check)
+
+        layout.addWidget(options_group)
+
+        stop_key_group = QGroupBox("Loop Stop Key")
+        stop_key_layout = QHBoxLayout(stop_key_group)
+        self._stop_key_btn = KeyCaptureButton(single=True)
+        stop_key_layout.addWidget(self._stop_key_btn)
+        clear_btn = QPushButton("Clear")
+        clear_btn.clicked.connect(self._stop_key_btn.clear_events)
+        stop_key_layout.addWidget(clear_btn)
+        layout.addWidget(stop_key_group)
+
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
         cancel_btn = QPushButton("Cancel")
@@ -176,8 +220,15 @@ class MappingDialog(QDialog):
             self._editing_id = mapping.id
             self._source_btn.set_events([mapping.source])
             self._target_btn.set_events(mapping.target)
+            self._delay_spin.setValue(mapping.delay_ms)
+            self._turbo_check.setChecked(mapping.turbo)
+            if mapping.stop_key:
+                self._stop_key_btn.set_events([mapping.stop_key])
         else:
             self._editing_id = None
+
+    def _on_turbo_toggled(self, checked: bool):
+        self._delay_spin.setEnabled(not checked)
 
     def _on_ok(self):
         source_events = self._source_btn.get_events()
@@ -186,12 +237,18 @@ class MappingDialog(QDialog):
         if not source_events or not target_events:
             return
 
+        stop_key_events = self._stop_key_btn.get_events()
+        stop_key = stop_key_events[0] if stop_key_events else None
+
         self._result_mapping = MappingItem(
             source=source_events[0],
             target=target_events,
             id=self._editing_id or MappingItem(
                 source=source_events[0], target=target_events
             ).id,
+            delay_ms=self._delay_spin.value(),
+            turbo=self._turbo_check.isChecked(),
+            stop_key=stop_key,
         )
         self.accept()
 
