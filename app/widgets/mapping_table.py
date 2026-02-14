@@ -19,6 +19,7 @@ class MappingTable(QWidget):
     mapping_changed = Signal()
     edit_requested = Signal(MappingItem)
     add_requested = Signal()
+    preset_requested = Signal(str)
 
     def __init__(self, store: MappingStore):
         super().__init__()
@@ -45,6 +46,9 @@ class MappingTable(QWidget):
 
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
+        preset_btn = QPushButton("Shift + Arrow Turbo")
+        preset_btn.clicked.connect(lambda: self.preset_requested.emit("shift_arrow_turbo"))
+        btn_layout.addWidget(preset_btn)
         add_btn = QPushButton("Add Mapping")
         add_btn.clicked.connect(self.add_requested.emit)
         btn_layout.addWidget(add_btn)
