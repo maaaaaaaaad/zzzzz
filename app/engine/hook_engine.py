@@ -174,6 +174,9 @@ def _normalize_key(key) -> str | None:
     return None
 
 
+TURBO_INTERVAL = 0.01
+
+
 class HookEngine:
     WM_KEYDOWN = 0x0100
     WM_SYSKEYDOWN = 0x0104
@@ -184,6 +187,9 @@ class HookEngine:
         self._mouse_listener: mouse.Listener | None = None
         self._running = False
         self._vk_to_mapping: dict[int, MappingItem] = {}
+        self._loop_events: dict[str, threading.Event] = {}
+        self._stop_vk_to_mapping_id: dict[int, str] = {}
+        self._stop_mouse_to_mapping_id: dict[str, str] = {}
 
     @property
     def is_running(self) -> bool:
@@ -194,6 +200,9 @@ class HookEngine:
             self.stop()
 
         self._mappings = [m for m in mappings if m.enabled]
+        self._loop_events = {}
+        self._stop_vk_to_mapping_id = {}
+        self._stop_mouse_to_mapping_id = {}
 
         mouse_sources = {
             m.source.value for m in self._mappings if m.source.event_type == "mouse"
@@ -206,7 +215,18 @@ class HookEngine:
                 if vk:
                     self._vk_to_mapping[vk] = m
 
-        if self._vk_to_mapping:
+            if m.stop_key:
+                if m.stop_key.event_type == "keyboard":
+                    stop_vk = VK_MAP.get(m.stop_key.value)
+                    if stop_vk:
+                        self._stop_vk_to_mapping_id[stop_vk] = m.id
+                elif m.stop_key.event_type == "mouse":
+                    self._stop_mouse_to_mapping_id[m.stop_key.value] = m.id
+
+        need_keyboard = bool(self._vk_to_mapping) or bool(self._stop_vk_to_mapping_id)
+        need_mouse = bool(mouse_sources) or bool(self._stop_mouse_to_mapping_id)
+
+        if need_keyboard:
             self._keyboard_listener = keyboard.Listener(
                 on_press=lambda key: None,
                 on_release=lambda key: None,
@@ -214,7 +234,7 @@ class HookEngine:
             )
             self._keyboard_listener.start()
 
-        if mouse_sources:
+        if need_mouse:
             self._mouse_listener = mouse.Listener(
                 on_click=self._on_mouse_click,
             )
@@ -223,6 +243,10 @@ class HookEngine:
         self._running = True
 
     def stop(self):
+        for event in self._loop_events.values():
+            event.set()
+        self._loop_events.clear()
+
         if self._keyboard_listener:
             self._keyboard_listener.stop()
             self._keyboard_listener = None
@@ -232,12 +256,19 @@ class HookEngine:
         self._running = False
 
     def _win32_filter(self, msg, data):
-        if data.vkCode in self._vk_to_mapping:
+        vk = data.vkCode
+
+        if vk in self._stop_vk_to_mapping_id:
             if msg in (self.WM_KEYDOWN, self.WM_SYSKEYDOWN):
-                mapping = self._vk_to_mapping[data.vkCode]
-                threading.Thread(
-                    target=self._execute_target, args=(mapping,), daemon=True
-                ).start()
+                mapping_id = self._stop_vk_to_mapping_id[vk]
+                if mapping_id in self._loop_events:
+                    self._loop_events[mapping_id].set()
+            self._keyboard_listener.suppress_event()
+
+        if vk in self._vk_to_mapping:
+            if msg in (self.WM_KEYDOWN, self.WM_SYSKEYDOWN):
+                mapping = self._vk_to_mapping[vk]
+                self._trigger_mapping(mapping)
             self._keyboard_listener.suppress_event()
 
     def _on_mouse_click(self, x, y, button, pressed, injected=False):
@@ -250,12 +281,40 @@ class HookEngine:
             Button.middle: "mouse_middle",
         }
         value = button_map.get(button)
-        if value and pressed:
-            mapping = self._find_mouse_mapping(value)
-            if mapping:
-                threading.Thread(
-                    target=self._execute_target, args=(mapping,), daemon=True
-                ).start()
+        if not value or not pressed:
+            return
+
+        if value in self._stop_mouse_to_mapping_id:
+            mapping_id = self._stop_mouse_to_mapping_id[value]
+            if mapping_id in self._loop_events:
+                self._loop_events[mapping_id].set()
+                return
+
+        mapping = self._find_mouse_mapping(value)
+        if mapping:
+            self._trigger_mapping(mapping)
+
+    def _trigger_mapping(self, mapping: MappingItem):
+        if mapping.loop:
+            if mapping.id in self._loop_events:
+                return
+            stop_event = threading.Event()
+            self._loop_events[mapping.id] = stop_event
+            threading.Thread(
+                target=self._execute_loop, args=(mapping, stop_event), daemon=True
+            ).start()
+        else:
+            threading.Thread(
+                target=self._execute_target, args=(mapping,), daemon=True
+            ).start()
+
+    def _execute_loop(self, mapping: MappingItem, stop_event: threading.Event):
+        delay = TURBO_INTERVAL if mapping.turbo else max(mapping.delay_ms / 1000, TURBO_INTERVAL)
+        while not stop_event.is_set():
+            self._execute_target(mapping)
+            if stop_event.wait(delay):
+                break
+        self._loop_events.pop(mapping.id, None)
 
     def _find_keyboard_mapping(self, value: str) -> MappingItem | None:
         for m in self._mappings:
@@ -271,6 +330,13 @@ class HookEngine:
 
     def _execute_target(self, mapping: MappingItem):
         MODIFIER_KEYS = {"shift", "ctrl", "alt", "meta"}
+
+        if mapping.turbo:
+            action_delay = TURBO_INTERVAL
+        elif mapping.delay_ms > 0:
+            action_delay = mapping.delay_ms / 1000
+        else:
+            action_delay = 0.05
 
         modifiers = []
         actions = []
@@ -289,7 +355,7 @@ class HookEngine:
 
             for i, event in enumerate(actions):
                 if i > 0:
-                    time.sleep(0.05)
+                    time.sleep(action_delay)
                 if event.event_type == "keyboard":
                     vk = VK_MAP.get(event.value)
                     if vk:
