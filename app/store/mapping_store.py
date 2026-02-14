@@ -54,3 +54,17 @@ class MappingStore:
                 item.enabled = not item.enabled
                 break
         self.save()
+
+    def toggle_turbo(self, item_id: str):
+        for item in self._mappings:
+            if item.id == item_id:
+                item.turbo = not item.turbo
+                break
+        self.save()
+
+    def toggle_loop(self, item_id: str):
+        for item in self._mappings:
+            if item.id == item_id:
+                item.loop = not item.loop
+                break
+        self.save()
