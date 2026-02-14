@@ -158,12 +158,29 @@ class KeyCaptureButton(QPushButton):
                 self._stop_capture()
 
 
+PRESETS = {
+    "shift_arrow_turbo": {
+        "target": [
+            InputEvent(event_type="keyboard", value="shift"),
+            InputEvent(event_type="keyboard", value="up"),
+            InputEvent(event_type="keyboard", value="down"),
+            InputEvent(event_type="keyboard", value="left"),
+            InputEvent(event_type="keyboard", value="right"),
+        ],
+        "turbo": True,
+        "loop": True,
+        "delay_ms": 0,
+    },
+}
+
+
 class MappingDialog(QDialog):
-    def __init__(self, parent=None, mapping: MappingItem | None = None):
+    def __init__(self, parent=None, mapping: MappingItem | None = None, preset: str | None = None):
         super().__init__(parent)
         self.setWindowTitle("Edit Mapping" if mapping else "Add Mapping")
         self.setMinimumWidth(400)
         self._result_mapping: MappingItem | None = None
+        self._preset_loop = False
 
         layout = QVBoxLayout(self)
 
@@ -227,6 +244,13 @@ class MappingDialog(QDialog):
         else:
             self._editing_id = None
 
+        if preset and preset in PRESETS:
+            p = PRESETS[preset]
+            self._target_btn.set_events(p["target"])
+            self._turbo_check.setChecked(p["turbo"])
+            self._delay_spin.setValue(p["delay_ms"])
+            self._preset_loop = p.get("loop", False)
+
     def _on_turbo_toggled(self, checked: bool):
         self._delay_spin.setEnabled(not checked)
 
@@ -248,6 +272,7 @@ class MappingDialog(QDialog):
             ).id,
             delay_ms=self._delay_spin.value(),
             turbo=self._turbo_check.isChecked(),
+            loop=self._preset_loop,
             stop_key=stop_key,
         )
         self.accept()
