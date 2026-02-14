@@ -24,6 +24,7 @@ if IS_WINDOWS:
     MOUSEEVENTF_MIDDLEUP = 0x0040
 
     ULONG_PTR = ctypes.c_ulonglong if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_ulong
+    INJECTED_MARKER = 0xDEAD
 
     class MOUSEINPUT(ctypes.Structure):
         _fields_ = [
@@ -69,12 +70,14 @@ if IS_WINDOWS:
         inp.type = INPUT_KEYBOARD
         inp.union.ki.wVk = vk
         inp.union.ki.dwFlags = KEYEVENTF_KEYUP if key_up else 0
+        inp.union.ki.dwExtraInfo = INJECTED_MARKER
         ctypes.windll.user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
 
     def _send_mouse_event(flags: int):
         inp = INPUT()
         inp.type = INPUT_MOUSE
         inp.union.mi.dwFlags = flags
+        inp.union.mi.dwExtraInfo = INJECTED_MARKER
         ctypes.windll.user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
 
 VK_MAP = {
@@ -256,6 +259,9 @@ class HookEngine:
         self._running = False
 
     def _win32_filter(self, msg, data):
+        if IS_WINDOWS and data.dwExtraInfo == INJECTED_MARKER:
+            return
+
         vk = data.vkCode
 
         if vk in self._stop_vk_to_mapping_id:
