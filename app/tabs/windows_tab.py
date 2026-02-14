@@ -27,6 +27,7 @@ class WindowsTab(QWidget):
         self._table.add_requested.connect(self._on_add)
         self._table.edit_requested.connect(self._on_edit)
         self._table.mapping_changed.connect(self._on_mapping_changed)
+        self._table.preset_requested.connect(self._on_preset)
         layout.addWidget(self._table)
 
     def _on_toggle(self, active: bool):
@@ -52,6 +53,15 @@ class WindowsTab(QWidget):
             updated = dialog.get_mapping()
             if updated:
                 self._store.update(updated)
+                self._table.refresh()
+                self._restart_engine_if_running()
+
+    def _on_preset(self, preset_name: str):
+        dialog = MappingDialog(self, preset=preset_name)
+        if dialog.exec():
+            mapping = dialog.get_mapping()
+            if mapping:
+                self._store.add(mapping)
                 self._table.refresh()
                 self._restart_engine_if_running()
 
