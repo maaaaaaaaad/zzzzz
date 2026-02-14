@@ -87,8 +87,10 @@ class KeyCaptureButton(QPushButton):
         else:
             self.setText("Press keys in sequence... (Esc to finish)")
         self.setFocus()
+        self.grabKeyboard()
 
     def _stop_capture(self):
+        self.releaseKeyboard()
         self._capturing = False
         if self._events:
             self.setText(" → ".join(e.display_name() for e in self._events))
