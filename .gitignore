@@ -33,4 +33,5 @@ Desktop.ini
 *.md
 .mcp.json
 .claude
+config/
 nul
