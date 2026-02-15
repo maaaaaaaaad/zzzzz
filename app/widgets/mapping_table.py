@@ -44,6 +44,16 @@ class MappingTable(QWidget):
         self._table.verticalHeader().setVisible(False)
         layout.addWidget(self._table)
 
+        check_layout = QHBoxLayout()
+        select_all_btn = QPushButton("Select All")
+        select_all_btn.clicked.connect(lambda: self._set_all_enabled(True))
+        check_layout.addWidget(select_all_btn)
+        deselect_all_btn = QPushButton("Deselect All")
+        deselect_all_btn.clicked.connect(lambda: self._set_all_enabled(False))
+        check_layout.addWidget(deselect_all_btn)
+        check_layout.addStretch()
+        layout.addLayout(check_layout)
+
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
         preset_btn = QPushButton("Shift + Arrow Turbo")
@@ -108,6 +118,13 @@ class MappingTable(QWidget):
             del_btn = QPushButton("Delete")
             del_btn.clicked.connect(lambda _, item_id=item.id: self._on_delete(item_id))
             self._table.setCellWidget(row, 8, del_btn)
+
+    def _set_all_enabled(self, enabled: bool):
+        for item in self._store.get_all():
+            if item.enabled != enabled:
+                self._store.toggle(item.id)
+        self.refresh()
+        self.mapping_changed.emit()
 
     def _on_toggle(self, item_id: str):
         self._store.toggle(item_id)
