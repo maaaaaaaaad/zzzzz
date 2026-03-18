@@ -182,7 +182,9 @@ TURBO_INTERVAL = 0.01
 
 class HookEngine:
     WM_KEYDOWN = 0x0100
+    WM_KEYUP = 0x0101
     WM_SYSKEYDOWN = 0x0104
+    WM_SYSKEYUP = 0x0105
 
     def __init__(self):
         self._mappings: list[MappingItem] = []
@@ -191,6 +193,7 @@ class HookEngine:
         self._running = False
         self._vk_to_mapping: dict[int, MappingItem] = {}
         self._loop_events: dict[str, threading.Event] = {}
+        self._held_keys: dict[int, threading.Event] = {}
         self._stop_vk_to_mapping_id: dict[int, str] = {}
         self._stop_mouse_to_mapping_id: dict[str, str] = {}
 
@@ -262,6 +265,10 @@ class HookEngine:
         self._running = True
 
     def stop(self):
+        for event in self._held_keys.values():
+            event.set()
+        self._held_keys.clear()
+
         for event in self._loop_events.values():
             event.set()
         self._loop_events.clear()
@@ -288,9 +295,19 @@ class HookEngine:
             self._keyboard_listener.suppress_event()
 
         if vk in self._vk_to_mapping:
+            mapping = self._vk_to_mapping[vk]
             if msg in (self.WM_KEYDOWN, self.WM_SYSKEYDOWN):
-                mapping = self._vk_to_mapping[vk]
-                self._trigger_mapping(mapping)
+                if mapping.loop:
+                    self._trigger_mapping(mapping)
+                elif vk not in self._held_keys:
+                    stop_event = threading.Event()
+                    self._held_keys[vk] = stop_event
+                    threading.Thread(
+                        target=self._execute_hold, args=(mapping, vk, stop_event), daemon=True
+                    ).start()
+            elif msg in (self.WM_KEYUP, self.WM_SYSKEYUP):
+                if vk in self._held_keys:
+                    self._held_keys[vk].set()
             self._keyboard_listener.suppress_event()
 
     def _on_mouse_click(self, x, y, button, pressed, injected=False):
@@ -329,6 +346,18 @@ class HookEngine:
             threading.Thread(
                 target=self._execute_target, args=(mapping,), daemon=True
             ).start()
+
+    def _execute_hold(self, mapping: MappingItem, vk: int, stop_event: threading.Event):
+        if mapping.turbo:
+            delay = TURBO_INTERVAL
+        elif mapping.delay_ms > 0:
+            delay = mapping.delay_ms / 1000
+        else:
+            delay = 0.05
+        self._execute_target(mapping)
+        while not stop_event.wait(delay):
+            self._execute_target(mapping)
+        self._held_keys.pop(vk, None)
 
     def _execute_loop(self, mapping: MappingItem, stop_event: threading.Event):
         delay = TURBO_INTERVAL if mapping.turbo else max(mapping.delay_ms / 1000, TURBO_INTERVAL)
