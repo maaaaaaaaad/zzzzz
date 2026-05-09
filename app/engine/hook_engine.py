@@ -299,11 +299,16 @@ class HookEngine:
             if msg in (self.WM_KEYDOWN, self.WM_SYSKEYDOWN):
                 if mapping.loop:
                     self._trigger_mapping(mapping)
-                elif vk not in self._held_keys:
-                    stop_event = threading.Event()
-                    self._held_keys[vk] = stop_event
+                elif mapping.turbo:
+                    if vk not in self._held_keys:
+                        stop_event = threading.Event()
+                        self._held_keys[vk] = stop_event
+                        threading.Thread(
+                            target=self._execute_hold, args=(mapping, vk, stop_event), daemon=True
+                        ).start()
+                else:
                     threading.Thread(
-                        target=self._execute_hold, args=(mapping, vk, stop_event), daemon=True
+                        target=self._execute_target, args=(mapping,), daemon=True
                     ).start()
             elif msg in (self.WM_KEYUP, self.WM_SYSKEYUP):
                 if vk in self._held_keys:
