@@ -389,39 +389,40 @@ class HookEngine:
         else:
             action_delay = 0.05
 
-        modifiers = []
-        actions = []
-        for event in mapping.target:
-            if event.event_type == "keyboard" and event.value in MODIFIER_KEYS:
-                modifiers.append(event)
-            else:
-                actions.append(event)
-
         if IS_WINDOWS:
-            for mod in modifiers:
-                vk = VK_MAP.get(mod.value)
-                if vk:
-                    _send_key_event(vk)
-                    time.sleep(0.02)
+            active_mods = []
+            action_count = 0
 
-            for i, event in enumerate(actions):
-                if i > 0:
-                    time.sleep(action_delay)
-                if event.event_type == "keyboard":
+            for event in mapping.target:
+                if event.event_type == "keyboard" and event.value in MODIFIER_KEYS:
+                    vk = VK_MAP.get(event.value)
+                    if vk:
+                        if vk in active_mods:
+                            _send_key_event(vk, key_up=True)
+                            active_mods.remove(vk)
+                        else:
+                            _send_key_event(vk)
+                            active_mods.append(vk)
+                        time.sleep(0.02)
+                elif event.event_type == "keyboard":
+                    if action_count > 0:
+                        time.sleep(action_delay)
                     vk = VK_MAP.get(event.value)
                     if vk:
                         _send_key_event(vk)
                         time.sleep(0.03)
                         _send_key_event(vk, key_up=True)
+                        action_count += 1
                 elif event.event_type == "mouse":
+                    if action_count > 0:
+                        time.sleep(action_delay)
                     down_up = MOUSE_DOWN_UP.get(event.value)
                     if down_up and down_up[0]:
                         _send_mouse_event(down_up[0])
                         time.sleep(0.03)
                         _send_mouse_event(down_up[1])
+                        action_count += 1
 
-            for mod in reversed(modifiers):
-                vk = VK_MAP.get(mod.value)
-                if vk:
-                    time.sleep(0.02)
-                    _send_key_event(vk, key_up=True)
+            for vk in reversed(active_mods):
+                time.sleep(0.02)
+                _send_key_event(vk, key_up=True)
