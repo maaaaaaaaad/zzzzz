@@ -203,6 +203,21 @@ PRESETS = {
         "loop": True,
         "delay_ms": 0,
     },
+    "ctrl_hold_arrow_tap": {
+        "target": [
+            InputEvent(event_type="hold", value="ctrl", duration_ms=30000),
+            InputEvent(event_type="keyboard", value="left"),
+            InputEvent(event_type="sleep", value="", duration_ms=80),
+            InputEvent(event_type="keyboard", value="left"),
+            InputEvent(event_type="hold", value="ctrl", duration_ms=30000),
+            InputEvent(event_type="keyboard", value="right"),
+            InputEvent(event_type="sleep", value="", duration_ms=80),
+            InputEvent(event_type="keyboard", value="right"),
+        ],
+        "turbo": False,
+        "loop": True,
+        "delay_ms": 0,
+    },
 }
 
 
