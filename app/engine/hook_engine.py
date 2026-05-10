@@ -359,15 +359,15 @@ class HookEngine:
             delay = mapping.delay_ms / 1000
         else:
             delay = 0.05
-        self._execute_target(mapping)
+        self._execute_target(mapping, stop_event)
         while not stop_event.wait(delay):
-            self._execute_target(mapping)
+            self._execute_target(mapping, stop_event)
         self._held_keys.pop(vk, None)
 
     def _execute_loop(self, mapping: MappingItem, stop_event: threading.Event):
         delay = TURBO_INTERVAL if mapping.turbo else max(mapping.delay_ms / 1000, TURBO_INTERVAL)
         while not stop_event.is_set():
-            self._execute_target(mapping)
+            self._execute_target(mapping, stop_event)
             if stop_event.wait(delay):
                 break
         self._loop_events.pop(mapping.id, None)
@@ -384,7 +384,7 @@ class HookEngine:
                 return m
         return None
 
-    def _execute_target(self, mapping: MappingItem):
+    def _execute_target(self, mapping: MappingItem, stop_event: threading.Event | None = None):
         if mapping.turbo:
             action_delay = TURBO_INTERVAL
         elif mapping.delay_ms > 0:
@@ -392,19 +392,46 @@ class HookEngine:
         else:
             action_delay = 0.05
 
-        if IS_WINDOWS:
-            for i, event in enumerate(mapping.target):
-                if i > 0:
-                    time.sleep(action_delay)
-                if event.event_type == "keyboard":
-                    vk = VK_MAP.get(event.value)
-                    if vk:
-                        _send_key_event(vk)
-                        time.sleep(0.03)
-                        _send_key_event(vk, key_up=True)
-                elif event.event_type == "mouse":
-                    down_up = MOUSE_DOWN_UP.get(event.value)
-                    if down_up and down_up[0]:
-                        _send_mouse_event(down_up[0])
-                        time.sleep(0.03)
-                        _send_mouse_event(down_up[1])
+        if not IS_WINDOWS:
+            return
+
+        for i, event in enumerate(mapping.target):
+            if stop_event is not None and stop_event.is_set():
+                return
+            if i > 0 and event.event_type not in ("hold", "sleep"):
+                if self._wait(action_delay, stop_event):
+                    return
+            if event.event_type == "keyboard":
+                vk = VK_MAP.get(event.value)
+                if vk:
+                    _send_key_event(vk)
+                    time.sleep(0.03)
+                    _send_key_event(vk, key_up=True)
+            elif event.event_type == "mouse":
+                down_up = MOUSE_DOWN_UP.get(event.value)
+                if down_up and down_up[0]:
+                    _send_mouse_event(down_up[0])
+                    time.sleep(0.03)
+                    _send_mouse_event(down_up[1])
+            elif event.event_type == "hold":
+                vk = VK_MAP.get(event.value)
+                if vk:
+                    duration = event.duration_ms / 1000
+                    _send_key_event(vk)
+                    aborted = self._wait(duration, stop_event)
+                    _send_key_event(vk, key_up=True)
+                    if aborted:
+                        return
+            elif event.event_type == "sleep":
+                duration = event.duration_ms / 1000
+                if self._wait(duration, stop_event):
+                    return
+
+    @staticmethod
+    def _wait(duration: float, stop_event: threading.Event | None) -> bool:
+        if duration <= 0:
+            return stop_event.is_set() if stop_event is not None else False
+        if stop_event is not None:
+            return stop_event.wait(duration)
+        time.sleep(duration)
+        return False
