@@ -223,7 +223,6 @@ class MappingDialog(QDialog):
         self.setWindowTitle("Edit Mapping" if mapping else "Add Mapping")
         self.setMinimumWidth(400)
         self._result_mapping: MappingItem | None = None
-        self._preset_loop = False
 
         layout = QVBoxLayout(self)
 
@@ -243,9 +242,9 @@ class MappingDialog(QDialog):
         options_layout = QVBoxLayout(options_group)
 
         delay_layout = QHBoxLayout()
-        delay_layout.addWidget(QLabel("Delay between keys:"))
+        delay_layout.addWidget(QLabel("Delay / Loop interval:"))
         self._delay_spin = QSpinBox()
-        self._delay_spin.setRange(0, 99999)
+        self._delay_spin.setRange(0, 999999)
         self._delay_spin.setSuffix(" ms")
         self._delay_spin.setValue(0)
         delay_layout.addWidget(self._delay_spin)
@@ -254,6 +253,9 @@ class MappingDialog(QDialog):
         self._turbo_check = QCheckBox("Turbo")
         self._turbo_check.toggled.connect(self._on_turbo_toggled)
         options_layout.addWidget(self._turbo_check)
+
+        self._loop_check = QCheckBox("Loop (반복) - Stop Key 필요")
+        options_layout.addWidget(self._loop_check)
 
         layout.addWidget(options_group)
 
@@ -282,6 +284,7 @@ class MappingDialog(QDialog):
             self._target_btn.set_events(mapping.target)
             self._delay_spin.setValue(mapping.delay_ms)
             self._turbo_check.setChecked(mapping.turbo)
+            self._loop_check.setChecked(mapping.loop)
             if mapping.stop_key:
                 self._stop_key_btn.set_events([mapping.stop_key])
         else:
@@ -292,7 +295,7 @@ class MappingDialog(QDialog):
             self._target_btn.set_events(p["target"])
             self._turbo_check.setChecked(p["turbo"])
             self._delay_spin.setValue(p["delay_ms"])
-            self._preset_loop = p.get("loop", False)
+            self._loop_check.setChecked(p.get("loop", False))
 
     def focusNextPrevChild(self, next_child):
         for btn in (self._source_btn, self._target_btn, self._stop_key_btn):
@@ -321,7 +324,7 @@ class MappingDialog(QDialog):
             ).id,
             delay_ms=self._delay_spin.value(),
             turbo=self._turbo_check.isChecked(),
-            loop=self._preset_loop,
+            loop=self._loop_check.isChecked(),
             stop_key=stop_key,
         )
         self.accept()
