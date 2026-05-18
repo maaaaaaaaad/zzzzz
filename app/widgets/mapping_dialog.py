@@ -189,6 +189,11 @@ class KeyCaptureButton(QPushButton):
             if self._single:
                 self._stop_capture()
 
+    def focusOutEvent(self, event):
+        if self._capturing:
+            self._stop_capture()
+        super().focusOutEvent(event)
+
 
 PRESETS = {
     "shift_arrow_turbo": {
